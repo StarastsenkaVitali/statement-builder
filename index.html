@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Statement Designer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -17,14 +18,15 @@
     <button onclick="saveToFile()">💾 Save</button>
     <button onclick="document.getElementById('loadInput').click()">📂 Load</button>
     <input type="file" id="loadInput" accept=".json" style="display:none" onchange="loadFromFile(this.files[0])">
+    <button onclick="exportDocx()">📄 Export DOCX</button>
   </div>
 
   <p class="hint">
     Left: define operands and their values. Values have 3 kinds:
-    <span class="tag-kind keyword">keyword</span> fixed token (e.g. *STD),
-    <span class="tag-kind simple">simple</span> typed user input (e.g. &lt;filename&gt;),
-    <span class="tag-kind nested">nested</span> value with sub-operands,
-    <span class="tag-kind list">list</span> up to N items of a simple type.
+    <span class="tag-kind keyword">keyword</span> fixed token (e.g. *STD) &nbsp;
+    <span class="tag-kind simple">simple</span> typed user input (e.g. &lt;filename&gt;) &nbsp;
+    <span class="tag-kind nested">nested</span> value with sub-operands &nbsp;
+    <span class="tag-kind list">list</span> up to N items of a simple type
   </p>
 
   <div class="columns">
@@ -47,6 +49,7 @@
   </div>
 
   <script src="script.js"></script>
+
 </body>
 
 </html>
