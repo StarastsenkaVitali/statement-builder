@@ -1,3 +1,4 @@
+/* ── base ── */
 body {
   font-family: Consolas, monospace;
   font-size: 13px;
@@ -19,6 +20,7 @@ h2 {
   padding-bottom: 3px;
 }
 
+/* ── layout ── */
 .columns {
   display: flex;
   gap: 16px;
@@ -33,6 +35,25 @@ h2 {
 .col-form {
   flex: 1;
   min-width: 0;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.meta-row label {
+  font-weight: bold;
+}
+
+.toplevel-add {
+  margin: 8px 0 4px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* ── builder ── */
@@ -158,7 +179,7 @@ h2 {
   font-style: italic;
 }
 
-/* ── shared ── */
+/* ── shared controls ── */
 input[type=text],
 input[type=number] {
   font-family: Consolas, monospace;
@@ -215,6 +236,7 @@ button.add:hover {
   background: #e0ffe0;
 }
 
+/* ── value kind badges ── */
 .tag-kind {
   font-size: 10px;
   padding: 1px 5px;
@@ -244,25 +266,7 @@ button.add:hover {
   color: #536;
 }
 
-.toplevel-add {
-  margin: 8px 0 4px;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.meta-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-
-.meta-row label {
-  font-weight: bold;
-}
-
+/* ── output ── */
 #output {
   white-space: pre-wrap;
   background: #1e1e1e;
@@ -282,4 +286,81 @@ button.add:hover {
 
 .sep {
   color: #aaa;
+}
+
+/* ── description modal ── */
+#modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .45);
+  z-index: 2000;
+}
+
+#modal-box {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #fff;
+  border-radius: 6px;
+  padding: 20px 24px;
+  width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .25);
+}
+
+#modal-box h3 {
+  margin: 0 0 14px 0;
+  font-size: 14px;
+  color: #0052CC;
+}
+
+.modal-op-desc {
+  margin-bottom: 14px;
+}
+
+.modal-op-desc label {
+  font-weight: bold;
+  font-size: 12px;
+  display: block;
+  margin-bottom: 3px;
+}
+
+.modal-val-list {
+  border-top: 1px solid #eee;
+  padding-top: 10px;
+}
+
+.modal-val-row {
+  margin: 8px 0;
+}
+
+.modal-val-row label {
+  font-size: 12px;
+  display: block;
+  margin-bottom: 3px;
+}
+
+.modal-val-row label .tag-kind {
+  margin-right: 4px;
+}
+
+textarea.desc-ta {
+  font-family: Arial, sans-serif;
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  padding: 4px 6px;
+  resize: vertical;
+}
+
+.modal-footer {
+  margin-top: 14px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
 }

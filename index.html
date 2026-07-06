@@ -19,6 +19,7 @@
     <button onclick="document.getElementById('loadInput').click()">📂 Load</button>
     <input type="file" id="loadInput" accept=".json" style="display:none" onchange="loadFromFile(this.files[0])">
     <button onclick="exportDocx()">📄 Export DOCX</button>
+    <button onclick="exportHtml()">🌐 Export HTML</button>
   </div>
 
   <p class="hint">
@@ -49,6 +50,19 @@
   </div>
 
   <script src="script.js"></script>
+
+  <!-- Description Modal -->
+  <div id="modal-overlay">
+    <div id="modal-box">
+      <h3 id="modal-title">Descriptions</h3>
+      <div id="modal-body"></div>
+      <div class="modal-footer">
+        <button onclick="closeDescModal()">Cancel</button>
+        <button onclick="saveDescModal()"
+          style="background:#0052CC;color:#fff;border-color:#003a9b;font-weight:bold;">💾 Save</button>
+      </div>
+    </div>
+  </div>
 
 </body>
 

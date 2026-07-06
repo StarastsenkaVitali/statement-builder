@@ -17,18 +17,20 @@ const SIMPLE_TYPES = [
 ];
 
 // ─── Model ────────────────────────────────────────────────────────────────────
-// Operand : { id, name, values:[Value] }
-// keyword : { id, kind:'keyword', label }
-// simple  : { id, kind:'simple',  simpleType }          ← no label, no user input
-// nested  : { id, kind:'nested',  label, children:[Operand] }
-// list    : { id, kind:'list',    simpleType, maxItems } ← auto-label list-poss(N)
+// Operand : { id, name, values:[Value], description }
+// keyword : { id, kind:'keyword', label, description }
+// simple  : { id, kind:'simple',  simpleType, description }
+// nested  : { id, kind:'nested',  label, children:[Operand], description }
+// list    : { id, kind:'list',    simpleType, maxItems, description }
 
 let idCounter = 1;
 const uid = () => 'n' + (idCounter++);
 
-function makeOperand(name) { return { id: uid(), name: name || 'NEW-OPERAND', values: [] }; }
+function makeOperand(name) {
+  return { id: uid(), name: name || 'NEW-OPERAND', values: [], description: '' };
+}
 function makeValue(kind) {
-  const v = { id: uid(), kind: kind || 'keyword' };
+  const v = { id: uid(), kind: kind || 'keyword', description: '' };
   if (kind === 'keyword') { v.label = '*NEW-VALUE'; }
   if (kind === 'simple') { v.simpleType = SIMPLE_TYPES[0]; }
   if (kind === 'nested') { v.label = '*NEW-VALUE'; v.children = []; }
@@ -36,20 +38,40 @@ function makeValue(kind) {
   return v;
 }
 
-// display label used in dropdowns and collapse summaries
+// display label used in dropdowns
 function valueLabel(v) {
   if (v.kind === 'keyword') return v.label || '(keyword)';
   if (v.kind === 'simple') return v.simpleType;
   if (v.kind === 'nested') return (v.label || '(nested)') + '(...)';
-  if (v.kind === 'list') return 'list-poss(' + (v.maxItems || 20) + ')';
+  if (v.kind === 'list') return 'list-poss(' + (v.maxItems || 20) + '): ' + v.simpleType;
+  return '?';
+}
+// summary shown in collapsed form header
+function valueSummary(v, sel) {
+  if (v.kind === 'keyword') return v.label || '(keyword)';
+  if (v.kind === 'simple') return (sel.text && sel.text.trim()) ? sel.text.trim() : v.simpleType;
+  if (v.kind === 'nested') return (v.label || '(nested)') + '(...)';
+  if (v.kind === 'list') {
+    const items = (sel.listItems || []).map(s => s.trim()).filter(Boolean);
+    return items.length ? '(' + items.join(',') + ')' : 'list-poss(' + (v.maxItems || 20) + ')';
+  }
   return '?';
 }
 
 let schema = [];
 
-// collapse state: separate for builder and form
-let bCollapsed = {};   // builder:  opId → bool
-let fCollapsed = {};   // form:     opId → bool
+// collapse state: separate for builder and form; true = collapsed
+let bCollapsed = {};
+let fCollapsed = {};
+
+// collapse all operands in a list (and their nested children) by default
+function collapseAll(list) {
+  list.forEach(op => {
+    bCollapsed[op.id] = true;
+    fCollapsed[op.id] = true;
+    op.values.filter(v => v.kind === 'nested').forEach(v => collapseAll(v.children || []));
+  });
+}
 
 // ─── Find helpers ─────────────────────────────────────────────────────────────
 function findOperand(list, id) {
@@ -122,16 +144,8 @@ function changeValueKind(id, kind) {
   renderAll();
 }
 
-function toggleBCollapse(id) {
-  bCollapsed[id] = !bCollapsed[id];
-  // rebuild just the builder (form stays intact)
-  renderBuilder();
-}
-function toggleFCollapse(id) {
-  fCollapsed[id] = !fCollapsed[id];
-  renderForm();
-  renderOutput();
-}
+function toggleBCollapse(id) { bCollapsed[id] = !bCollapsed[id]; renderBuilder(); }
+function toggleFCollapse(id) { fCollapsed[id] = !fCollapsed[id]; renderForm(); renderOutput(); }
 
 // ─── Builder render ───────────────────────────────────────────────────────────
 function renderBuilder() {
@@ -141,35 +155,31 @@ function renderBuilder() {
 }
 
 function buildOperandEl(op) {
-  const collapsed = !bCollapsed[op.id];
+  const collapsed = !!bCollapsed[op.id];
   const wrap = document.createElement('div'); wrap.className = 'op-block';
 
-  // ── header (always visible, clickable) ──
   const head = document.createElement('div'); head.className = 'op-head';
   head.innerHTML = `
     <span class="op-toggle">${collapsed ? '▶' : '▼'}</span>
     <span class="op-head-name">${esc(op.name)}</span>
+    <button onclick="event.stopPropagation();openDescModal('${op.id}')" title="Edit descriptions">📝 Desc</button>
     <button class="danger" onclick="event.stopPropagation();removeOperand('${op.id}')">✕ Delete</button>
   `;
   head.onclick = () => toggleBCollapse(op.id);
   wrap.appendChild(head);
 
-  // ── body (collapsible) ──
   const body = document.createElement('div');
   body.className = 'op-body' + (collapsed ? ' hidden' : '');
 
-  // name input
   const nameRow = document.createElement('div'); nameRow.className = 'row';
   nameRow.innerHTML = `<span>Name:</span>
     <input type="text" value="${esc(op.name)}" oninput="setOperandName('${op.id}',this.value)" size="22">`;
   body.appendChild(nameRow);
 
-  // values
   const vWrap = document.createElement('div'); vWrap.style.marginTop = '4px';
   op.values.forEach(v => vWrap.appendChild(buildValueEl(op, v)));
   body.appendChild(vWrap);
 
-  // add-value buttons
   const addRow = document.createElement('div'); addRow.className = 'row'; addRow.style.marginTop = '4px';
   addRow.innerHTML = `
     <span class="hint">Add value:</span>
@@ -185,7 +195,6 @@ function buildOperandEl(op) {
 
 function buildValueEl(parentOp, v) {
   const box = document.createElement('div'); box.className = 'val-box';
-
   const kindTag = `<span class="tag-kind ${v.kind}">${v.kind}</span>`;
   const kindOpts = ['keyword', 'simple', 'nested', 'list'].map(k =>
     `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${k}</option>`
@@ -249,9 +258,10 @@ function esc(s) {
 let selections = {};
 function getSel(op) {
   if (!selections[op.id])
-    selections[op.id] = { choiceId: op.values.length ? op.values[0].id : null };
+    selections[op.id] = { choiceId: op.values.length ? op.values[0].id : null, text: '', listItems: [''] };
   if (op.values.length && !op.values.find(v => v.id === selections[op.id].choiceId))
     selections[op.id].choiceId = op.values[0].id;
+  if (!Array.isArray(selections[op.id].listItems)) selections[op.id].listItems = [''];
   return selections[op.id];
 }
 
@@ -264,14 +274,13 @@ function renderForm() {
 }
 
 function buildFormOperandEl(op) {
-  const collapsed = !fCollapsed[op.id];
+  const collapsed = !!fCollapsed[op.id];
   const sel = getSel(op);
   const chosenVal = op.values.find(v => v.id === sel.choiceId) || op.values[0];
-  const summary = chosenVal ? valueLabel(chosenVal) : '(no values)';
+  const summary = chosenVal ? valueSummary(chosenVal, sel) : '(no values)';
 
   const wrap = document.createElement('div'); wrap.className = 'form-op';
 
-  // ── header ──
   const head = document.createElement('div'); head.className = 'form-head';
   head.innerHTML = `
     <span class="form-toggle">${collapsed ? '▶' : '▼'}</span>
@@ -283,7 +292,6 @@ function buildFormOperandEl(op) {
 
   if (collapsed) return wrap;
 
-  // ── body ──
   const body = document.createElement('div'); body.className = 'form-body';
 
   if (!op.values.length) {
@@ -291,7 +299,6 @@ function buildFormOperandEl(op) {
   } else {
     const lineRow = document.createElement('div'); lineRow.className = 'row';
 
-    // dropdown if multiple values, static text if one
     if (op.values.length > 1) {
       const dd = document.createElement('select');
       op.values.forEach(v => {
@@ -311,6 +318,49 @@ function buildFormOperandEl(op) {
     }
     body.appendChild(lineRow);
 
+    // simple: text input
+    if (chosenVal && chosenVal.kind === 'simple') {
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.size = 30;
+      inp.placeholder = chosenVal.simpleType;
+      inp.value = sel.text || '';
+      inp.oninput = function () { sel.text = this.value; renderOutput(); };
+      const row2 = document.createElement('div'); row2.className = 'row'; row2.style.marginTop = '2px';
+      row2.appendChild(inp);
+      body.appendChild(row2);
+    }
+
+    // list: dynamic rows
+    if (chosenVal && chosenVal.kind === 'list') {
+      if (!sel.listItems.length) sel.listItems = [''];
+      const lw = document.createElement('div'); lw.style.marginTop = '2px';
+      sel.listItems.forEach((item, idx) => {
+        const row2 = document.createElement('div'); row2.className = 'row form-list-item';
+        if (idx > 0) {
+          const s = document.createElement('span'); s.className = 'sep'; s.textContent = ',';
+          row2.appendChild(s);
+        }
+        const inp = document.createElement('input');
+        inp.type = 'text'; inp.size = 28;
+        inp.placeholder = chosenVal.simpleType;
+        inp.value = item;
+        inp.oninput = function () { sel.listItems[idx] = this.value; renderOutput(); };
+        row2.appendChild(inp);
+        if (idx === sel.listItems.length - 1 && idx < (chosenVal.maxItems || 20) - 1) {
+          const ab = document.createElement('button'); ab.textContent = '+'; ab.className = 'add';
+          ab.onclick = () => { sel.listItems.push(''); renderForm(); renderOutput(); };
+          row2.appendChild(ab);
+        }
+        if (sel.listItems.length > 1) {
+          const db = document.createElement('button'); db.textContent = '−'; db.className = 'danger';
+          db.onclick = () => { sel.listItems.splice(idx, 1); renderForm(); renderOutput(); };
+          row2.appendChild(db);
+        }
+        lw.appendChild(row2);
+      });
+      body.appendChild(lw);
+    }
+
     // nested children
     if (chosenVal && chosenVal.kind === 'nested' && chosenVal.children && chosenVal.children.length) {
       const cw = document.createElement('div'); cw.className = 'form-indent';
@@ -323,7 +373,7 @@ function buildFormOperandEl(op) {
   return wrap;
 }
 
-// ─── Statement output ─────────────────────────────────────────────────────────
+// ─── Statement output (depth-aware indentation) ───────────────────────────────
 function buildStmt(list, depth) {
   depth = depth || 1;
   const pad = '  '.repeat(depth);
@@ -342,9 +392,10 @@ function buildOperandOut(op, depth) {
   if (v.kind === 'keyword') {
     valStr = v.label;
   } else if (v.kind === 'simple') {
-    valStr = v.simpleType;
+    valStr = (sel.text && sel.text.trim()) ? sel.text.trim() : v.simpleType;
   } else if (v.kind === 'list') {
-    valStr = 'list-poss(' + (v.maxItems || 20) + '): ' + v.simpleType;
+    const items = (sel.listItems || []).map(s => s.trim()).filter(Boolean);
+    valStr = items.length ? '(' + items.join(',') + ')' : v.simpleType;
   } else if (v.kind === 'nested') {
     const inner = (v.children && v.children.length) ? buildStmt(v.children, depth + 1) : '';
     valStr = inner
@@ -392,8 +443,17 @@ function exampleSchema() {
   return [fileNames, env];
 }
 
-function resetSchema() { schema = exampleSchema(); selections = {}; bCollapsed = {}; fCollapsed = {}; renderAll(); }
-function clearSchema() { idCounter = 1; schema = []; selections = {}; bCollapsed = {}; fCollapsed = {}; renderAll(); }
+function resetSchema() {
+  schema = exampleSchema();
+  selections = {}; bCollapsed = {}; fCollapsed = {};
+  collapseAll(schema);
+  renderAll();
+}
+function clearSchema() {
+  idCounter = 1; schema = [];
+  selections = {}; bCollapsed = {}; fCollapsed = {};
+  renderAll();
+}
 
 // ─── Save / Load ──────────────────────────────────────────────────────────────
 function saveToFile() {
@@ -421,8 +481,10 @@ function loadFromFile(file) {
           if (v.kind === 'nested' && v.children) scan(v.children);
         });
       });
-      scan(schema); idCounter = max + 1;
+      scan(schema);
+      idCounter = max + 1;
       bCollapsed = {}; fCollapsed = {};
+      collapseAll(schema);
       renderAll();
     } catch (e) { alert('Could not load: invalid JSON.'); }
   };
@@ -439,10 +501,8 @@ function schemaToDocLines(operands, opLevel) {
   const lines = [];
   operands.forEach((op, idx) => {
     lines.push({ type: 'operand', prefix: opP, comma: idx > 0, name: op.name, values: op.values });
-    // lines.push({ type: 'blank' });
     op.values.filter(v => v.kind === 'nested').forEach(v => {
       lines.push({ type: 'nested-hdr', prefix: exP, label: v.label });
-      // lines.push({ type: 'blank' });
       if (v.children && v.children.length)
         lines.push(...schemaToDocLines(v.children, opLevel + 1));
     });
@@ -451,16 +511,19 @@ function schemaToDocLines(operands, opLevel) {
 }
 
 function xmlEsc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function wRpr(bold, italic, size) {
+function wRpr(bold, italic, size, color) {
   size = size || 20;
   return `<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>` +
     `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>` +
-    (bold ? '<w:b/><w:bCs/>' : '') + (italic ? '<w:i/><w:iCs/>' : '') + `</w:rPr>`;
+    (bold ? '<w:b/><w:bCs/>' : '') +
+    (italic ? '<w:i/><w:iCs/>' : '') +
+    (color ? `<w:color w:val="${color}"/>` : '') +
+    `</w:rPr>`;
 }
-function wRun(text, bold, italic, size) {
+function wRun(text, bold, italic, size, color) {
   if (!text && text !== ' ') return '';
   const sp = /^\s|\s$/.test(text) ? ' xml:space="preserve"' : '';
-  return `<w:r>${wRpr(bold, italic, size)}<w:t${sp}>${xmlEsc(text)}</w:t></w:r>`;
+  return `<w:r>${wRpr(bold, italic, size, color)}<w:t${sp}>${xmlEsc(text)}</w:t></w:r>`;
 }
 function wPara(runs, sa) {
   return `<w:p><w:pPr><w:spacing w:before="0" w:after="${sa || 0}"/></w:pPr>${runs}</w:p>`;
@@ -475,13 +538,12 @@ function valueRunsXml(v) {
 function lineToDocXml(line) {
   if (line.type === 'blank') return wPara(wRun(' '));
   if (line.type === 'title') return wPara(wRun(line.name, true, false, 28), 120);
-  if (line.type === 'nested-hdr') {
+  if (line.type === 'nested-hdr')
     return wPara((line.prefix ? wRun(line.prefix) : '') + wRun(line.label, true, true) + wRun('(...)'));
-  }
   if (line.type === 'operand') {
     let r = (line.prefix ? wRun(line.prefix) : '') +
-      (line.comma ? wRun(',', true) : '') +
-      wRun(line.name, true) + wRun(' = ');
+      (line.comma ? wRun(',', true, false, 20, '0052CC') : '') +
+      wRun(line.name, true, false, 20, '0052CC') + wRun(' = ');
     line.values.forEach((v, i) => { if (i > 0) r += wRun(' / '); r += valueRunsXml(v); });
     return wPara(r);
   }
@@ -490,13 +552,32 @@ function lineToDocXml(line) {
 
 async function exportDocx() {
   const name = (document.getElementById('stmtName').value || 'STATEMENT').trim();
-  const lines = [{ type: 'title', name }, { type: 'blank' }, ...schemaToDocLines(schema, 0)];
+  const lines = [{ type: 'title', name }, ...schemaToDocLines(schema, 0)];
   const bodyXml = lines.map(lineToDocXml).join('\n');
+
+  const descs = collectDescs(schema);
+  let descXml = '';
+  if (descs.length) {
+    const wParaIndent = (runs, indent) =>
+      `<w:p><w:pPr><w:ind w:left="${indent}"/><w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
+    descXml += wPara(wRun('Parameter Descriptions', true, false, 24), 80);
+    descs.forEach(d => {
+      if (d.type === 'op') {
+        descXml += wPara(wRun(d.name, true, false, 20, '0052CC'));
+        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), 360);
+      } else {
+        descXml += wParaIndent(wRun(d.label, false, true), 360);
+        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), 720);
+      }
+    });
+  }
+
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <w:body>
 ${bodyXml}
+${descXml}
 <w:sectPr><w:pgSz w:w="12240" w:h="15840"/>
 <w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1701"/></w:sectPr>
 </w:body></w:document>`;
@@ -527,5 +608,170 @@ ${bodyXml}
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// ─── HTML Export ──────────────────────────────────────────────────────────────
+function exportHtml() {
+  const name = (document.getElementById('stmtName').value || 'STATEMENT').trim();
+  const he = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  function valHtml(v) {
+    if (v.kind === 'keyword') return `<strong>${he(v.label)}</strong>`;
+    if (v.kind === 'simple') return `<span class="tp">${he(v.simpleType)}</span>`;
+    if (v.kind === 'nested') return `<strong><em>${he(v.label)}</em></strong><span class="pu">(...)</span>`;
+    if (v.kind === 'list') return `list-poss(${v.maxItems || 20}): <span class="tp">${he(v.simpleType)}</span>`;
+    return '';
+  }
+
+  const lines = [{ type: 'title', name }, ...schemaToDocLines(schema, 0)];
+  const rows = lines.map(line => {
+    if (line.type === 'blank') return '';
+    if (line.type === 'title') return `<span class="sn">${he(line.name)}</span>`;
+    if (line.type === 'nested-hdr') return he(line.prefix) +
+      `<strong><em>${he(line.label)}</em></strong><span class="pu">(...)</span>`;
+    if (line.type === 'operand') {
+      let s = he(line.prefix || '');
+      s += `<span class="on">${he((line.comma ? ',' : '') + line.name)}</span>`;
+      s += '<span class="eq"> = </span>';
+      s += line.values.map((v, i) => (i > 0 ? '<span class="sl"> / </span>' : '') + valHtml(v)).join('');
+      return s;
+    }
+    return '';
+  });
+
+  const descs = collectDescs(schema);
+  let descHtml = '';
+  if (descs.length) {
+    descHtml = '<h3>Parameter Descriptions</h3><table class="desc-table">';
+    descs.forEach(d => {
+      if (d.type === 'op')
+        descHtml += `<tr><td class="desc-op-name">${he(d.name)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
+      else
+        descHtml += `<tr><td class="desc-val-name">${he(d.label)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
+    });
+    descHtml += '</table>';
+  }
+
+  const doc = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${he(name)}</title>
+<style>
+  body   { font-family: Arial, Helvetica, sans-serif; margin: 40px; color: #222; background: #fff; }
+  h2     { font-family: Consolas, 'Courier New', monospace; font-size: 1.3em; color: #0052CC; margin: 0 0 8px 0; }
+  h3     { font-size: 1em; color: #444; margin: 28px 0 8px 0; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  .box   { display: inline-block; font-family: Consolas, 'Courier New', monospace; font-size: 13px;
+           line-height: 1.5; background: #f4f5f7; border: 1px solid #c0c4cc;
+           border-radius: 4px; padding: 16px 24px; }
+  pre    { margin: 0; white-space: pre; }
+  .sn    { color: #0052CC; font-weight: bold; font-size: 1.15em; }
+  .on    { color: #0052CC; font-weight: bold; }
+  .tp    { color: #444; }  .pu { color: #555; }  .eq { color: #333; }  .sl { color: #888; }
+  strong { font-weight: bold; }  em { font-style: italic; }
+  .desc-table { border-collapse: collapse; width: 100%; max-width: 800px; margin-top: 8px; }
+  .desc-table td { padding: 5px 10px; vertical-align: top; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+  .desc-table td:first-child { white-space: nowrap; font-family: Consolas, monospace; min-width: 200px; }
+  .desc-op-name  { color: #0052CC; font-weight: bold; }
+  .desc-val-name { padding-left: 20px !important; color: #333; font-style: italic; }
+  .desc-text     { color: #444; }
+</style>
+</head>
+<body>
+<h2>${he(name)}</h2>
+<div class="box"><pre>${rows.join('\n')}</pre></div>
+${descHtml}
+</body>
+</html>`;
+
+  const blob = new Blob([doc], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: name + '.html' });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ─── Description Modal ────────────────────────────────────────────────────────
+let _modalOpId = null;
+
+function openDescModal(opId) {
+  const op = findOperand(schema, opId);
+  if (!op) return;
+  _modalOpId = opId;
+  document.getElementById('modal-title').textContent = op.name + ' — Descriptions';
+  const body = document.getElementById('modal-body');
+  body.innerHTML = '';
+
+  const opSec = document.createElement('div'); opSec.className = 'modal-op-desc';
+  opSec.innerHTML = `<label>Operand description:</label>
+    <textarea class="desc-ta" rows="3" id="_desc_op" placeholder="Describe the ${esc(op.name)} operand…">${esc(op.description || '')}</textarea>`;
+  body.appendChild(opSec);
+
+  if (op.values.length) {
+    const vSec = document.createElement('div'); vSec.className = 'modal-val-list';
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'font-weight:bold;font-size:12px;margin-bottom:6px;';
+    hdr.textContent = 'Value descriptions:';
+    vSec.appendChild(hdr);
+    op.values.forEach(v => {
+      const row = document.createElement('div'); row.className = 'modal-val-row';
+      row.innerHTML = `<label><span class="tag-kind ${v.kind}">${esc(valueLabel(v))}</span></label>
+        <textarea class="desc-ta" rows="2" id="_desc_v_${v.id}" placeholder="Describe ${esc(valueLabel(v))}…">${esc(v.description || '')}</textarea>`;
+      vSec.appendChild(row);
+    });
+    body.appendChild(vSec);
+  }
+  document.getElementById('modal-overlay').style.display = 'block';
+}
+
+function saveDescModal() {
+  if (!_modalOpId) return;
+  const op = findOperand(schema, _modalOpId);
+  if (op) {
+    const opTa = document.getElementById('_desc_op');
+    if (opTa) op.description = opTa.value;
+    op.values.forEach(v => {
+      const vTa = document.getElementById('_desc_v_' + v.id);
+      if (vTa) v.description = vTa.value;
+    });
+  }
+  closeDescModal();
+}
+
+function closeDescModal() {
+  document.getElementById('modal-overlay').style.display = 'none';
+  _modalOpId = null;
+}
+
+// ─── Description helpers for exports ─────────────────────────────────────────
+function hasAnyDescription(list) {
+  for (const op of list) {
+    if (op.description && op.description.trim()) return true;
+    for (const v of op.values) {
+      if (v.description && v.description.trim()) return true;
+      if (v.kind === 'nested' && v.children && hasAnyDescription(v.children)) return true;
+    }
+  }
+  return false;
+}
+
+function collectDescs(list, result) {
+  result = result || [];
+  list.forEach(op => {
+    if (op.description || op.values.some(v => v.description) ||
+      op.values.some(v => v.kind === 'nested' && hasAnyDescription(v.children || []))) {
+      result.push({ type: 'op', name: op.name, desc: op.description || '' });
+      op.values.forEach(v => {
+        if (v.description) result.push({ type: 'val', label: valueLabel(v), kind: v.kind, desc: v.description });
+        if (v.kind === 'nested' && v.children) collectDescs(v.children, result);
+      });
+    }
+  });
+  return result;
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.getElementById('modal-overlay')?.addEventListener('click', function (e) {
+  if (e.target === this) saveDescModal();
+});
 
 resetSchema();
