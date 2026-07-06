@@ -1,4 +1,23 @@
-// ─── Simple type catalogue ────────────────────────────────────────────────────
+function loadExample() {
+  const data = JSON.parse(JSON.stringify(EXAMPLE_RESTORE_FILES)); // deep clone
+  schema = data.schema;
+  selections = data.selections || {};
+  document.getElementById('stmtName').value = data.stmtName;
+  let max = 0;
+  const scan = list => list.forEach(op => {
+    const m = /^n(\d+)$/.exec(op.id || ''); if (m) max = Math.max(max, +m[1]);
+    op.values.forEach(v => {
+      const m2 = /^n(\d+)$/.exec(v.id || ''); if (m2) max = Math.max(max, +m2[1]);
+      if (v.kind === 'nested' && v.children) scan(v.children);
+    });
+  });
+  scan(schema);
+  idCounter = max + 1;
+  bCollapsed = {}; fCollapsed = {};
+  collapseAll(schema);
+  renderAll();
+}
+
 const SIMPLE_TYPES = [
   '<filename 1..80 without-vers with-wild>',
   '<partial-filename 2..79 with-wild>',
@@ -774,4 +793,4 @@ document.getElementById('modal-overlay')?.addEventListener('click', function (e)
   if (e.target === this) saveDescModal();
 });
 
-resetSchema();
+loadExample();
