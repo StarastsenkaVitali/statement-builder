@@ -20,6 +20,7 @@
     <input type="file" id="loadInput" accept=".json" style="display:none" onchange="loadFromFile(this.files[0])">
     <button onclick="exportDocx()">📄 Export DOCX</button>
     <button onclick="exportHtml()">🌐 Export HTML</button>
+    <button onclick="loadExample()" style="border-color:#0052CC;color:#0052CC;">📋 RESTORE-FILES example</button>
   </div>
 
   <p class="hint">
@@ -49,9 +50,6 @@
     </div>
   </div>
 
-  <script src="rsf.js"></script>
-  <script src="script.js"></script>
-
   <!-- Description Modal -->
   <div id="modal-overlay">
     <div id="modal-box">
@@ -65,6 +63,8 @@
     </div>
   </div>
 
+  <script src="rsf.js"></script>
+  <script src="script.js"></script>
 </body>
 
 </html>

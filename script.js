@@ -1,38 +1,26 @@
-function loadExample() {
-  const data = JSON.parse(JSON.stringify(EXAMPLE_RESTORE_FILES)); // deep clone
-  schema = data.schema;
-  selections = data.selections || {};
-  document.getElementById('stmtName').value = data.stmtName;
-  let max = 0;
-  const scan = list => list.forEach(op => {
-    const m = /^n(\d+)$/.exec(op.id || ''); if (m) max = Math.max(max, +m[1]);
-    op.values.forEach(v => {
-      const m2 = /^n(\d+)$/.exec(v.id || ''); if (m2) max = Math.max(max, +m2[1]);
-      if (v.kind === 'nested' && v.children) scan(v.children);
-    });
-  });
-  scan(schema);
-  idCounter = max + 1;
-  bCollapsed = {}; fCollapsed = {};
-  collapseAll(schema);
-  renderAll();
-}
-
 const SIMPLE_TYPES = [
-  '<filename 1..80 without-vers with-wild>',
-  '<partial-filename 2..79 with-wild>',
-  '<composed-name 1..64 with-under>',
   '<filename 1..54 without-gen-vers>',
+  '<filename 1..80 without-vers with-wild>',
+  '<filename 1..22 without-cat-gen-vers>',
+  '<filename 1..8 without-cat-user-gen-vers>',
+  '<partial-filename 2..79 with-wild>',
+  '<composed-name 1..8>',
+  '<composed-name 1..64 with-under>',
   '<cat-id>',
   '<time>',
   '<date with-compl>',
-  '<filename 1..22 without-cat-gen-vers>',
-  '<integer -99999..0 days>',
   '<device>',
   '<name 1..8>',
   '<text 1..60>',
   '<integer 1..16>',
-  '<c-string 1..1>'
+  '<integer 1..255>',
+  '<integer -99999..0 days>',
+  '<integer -2147483648..2147483647>',
+  '<vsn 1..6>',
+  '<c-string 1..1>',
+  '<c-string 1..4>',
+  '<x-string 1..8>',
+  '<x-string 1..512>',
 ];
 
 // ─── Model ────────────────────────────────────────────────────────────────────
@@ -577,16 +565,17 @@ async function exportDocx() {
   const descs = collectDescs(schema);
   let descXml = '';
   if (descs.length) {
-    const wParaIndent = (runs, indent) =>
-      `<w:p><w:pPr><w:ind w:left="${indent}"/><w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
+    const wParaIndent = (runs, left) =>
+      `<w:p><w:pPr><w:ind w:left="${left}"/><w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
     descXml += wPara(wRun('Parameter Descriptions', true, false, 24), 80);
     descs.forEach(d => {
+      const left = d.depth * 360;
       if (d.type === 'op') {
-        descXml += wPara(wRun(d.name, true, false, 20, '0052CC'));
-        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), 360);
+        descXml += wParaIndent(wRun(d.name, true), left);
+        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left + 180);
       } else {
-        descXml += wParaIndent(wRun(d.label, false, true), 360);
-        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), 720);
+        descXml += wParaIndent(wRun(d.label, false, true), left);
+        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left + 180);
       }
     });
   }
@@ -662,10 +651,11 @@ function exportHtml() {
   if (descs.length) {
     descHtml = '<h3>Parameter Descriptions</h3><table class="desc-table">';
     descs.forEach(d => {
+      const pad = d.depth * 20;
       if (d.type === 'op')
-        descHtml += `<tr><td class="desc-op-name">${he(d.name)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
+        descHtml += `<tr><td class="desc-op-name" style="padding-left:${pad}px">${he(d.name)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
       else
-        descHtml += `<tr><td class="desc-val-name">${he(d.label)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
+        descHtml += `<tr><td class="desc-val-name" style="padding-left:${pad}px">${he(d.label)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
     });
     descHtml += '</table>';
   }
@@ -690,8 +680,8 @@ function exportHtml() {
   .desc-table { border-collapse: collapse; width: 100%; max-width: 800px; margin-top: 8px; }
   .desc-table td { padding: 5px 10px; vertical-align: top; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
   .desc-table td:first-child { white-space: nowrap; font-family: Consolas, monospace; min-width: 200px; }
-  .desc-op-name  { color: #0052CC; font-weight: bold; }
-  .desc-val-name { padding-left: 20px !important; color: #333; font-style: italic; }
+  .desc-op-name  { color: #000; font-weight: bold; }
+  .desc-val-name { color: #444; font-style: italic; }
   .desc-text     { color: #444; }
 </style>
 </head>
@@ -773,24 +763,29 @@ function hasAnyDescription(list) {
   return false;
 }
 
-function collectDescs(list, result) {
+function collectDescs(list, result, depth) {
   result = result || [];
+  depth = depth || 0;
   list.forEach(op => {
-    if (op.description || op.values.some(v => v.description) ||
-      op.values.some(v => v.kind === 'nested' && hasAnyDescription(v.children || []))) {
-      result.push({ type: 'op', name: op.name, desc: op.description || '' });
-      op.values.forEach(v => {
-        if (v.description) result.push({ type: 'val', label: valueLabel(v), kind: v.kind, desc: v.description });
-        if (v.kind === 'nested' && v.children) collectDescs(v.children, result);
-      });
-    }
+    const hasDesc = op.description || op.values.some(v =>
+      v.description || (v.kind === 'nested' && hasAnyDescription(v.children || [])));
+    if (!hasDesc) return;
+    result.push({ type: 'op', name: op.name, desc: op.description || '', depth });
+    op.values.forEach(v => {
+      const vHas = v.description || (v.kind === 'nested' && hasAnyDescription(v.children || []));
+      if (!vHas) return;
+      result.push({ type: 'val', label: valueLabel(v), kind: v.kind, desc: v.description || '', depth: depth + 1 });
+      if (v.kind === 'nested' && v.children) collectDescs(v.children, result, depth + 2);
+    });
   });
   return result;
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-document.getElementById('modal-overlay')?.addEventListener('click', function (e) {
-  if (e.target === this) saveDescModal();
+document.addEventListener('DOMContentLoaded', function () {
+  const overlay = document.getElementById('modal-overlay');
+  if (overlay) overlay.addEventListener('click', function (e) {
+    if (e.target === this) saveDescModal();
+  });
+  resetSchema();
 });
-
-loadExample();
