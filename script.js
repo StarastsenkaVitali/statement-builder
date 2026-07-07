@@ -33,6 +33,22 @@ const SIMPLE_TYPES = [
 let idCounter = 1;
 const uid = () => 'n' + (idCounter++);
 
+// bump idCounter past the highest id found in a schema tree — used after
+// loading/undoing/redoing a schema whose ids may exceed the live counter
+function bumpIdCounterFromSchema(list) {
+  let max = 0;
+  (function scan(l) {
+    l.forEach(op => {
+      const m = /^n(\d+)$/.exec(op.id || ''); if (m) max = Math.max(max, +m[1]);
+      op.values.forEach(v => {
+        const m2 = /^n(\d+)$/.exec(v.id || ''); if (m2) max = Math.max(max, +m2[1]);
+        if (v.kind === 'nested' && v.children) scan(v.children);
+      });
+    });
+  })(list);
+  idCounter = Math.max(idCounter, max + 1);
+}
+
 function makeOperand(name) {
   return { id: uid(), name: name || 'NEW-OPERAND', values: [], description: '' };
 }
@@ -66,6 +82,74 @@ function valueSummary(v, sel) {
 }
 
 let schema = [];
+
+// ─── Undo / redo history ──────────────────────────────────────────────────────
+// snapshots of `schema` only (JSON strings) — form selections are cheap to
+// redo by hand and aren't worth the extra bookkeeping.
+let undoStack = [];
+let redoStack = [];
+const HISTORY_LIMIT = 100;
+// rapid-fire edits from the same burst of keystrokes/clicks (typing a name,
+// clicking a number spinner) collapse into a single undo step
+let historyBurstActive = false;
+let historyBurstTimer = null;
+
+function snapshotSchema() { return JSON.stringify(schema); }
+
+function pushHistory() {
+  undoStack.push(snapshotSchema());
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  redoStack = [];
+  historyBurstActive = false;
+  clearTimeout(historyBurstTimer);
+  updateHistoryButtons();
+}
+
+function pushHistoryDebounced() {
+  if (!historyBurstActive) {
+    undoStack.push(snapshotSchema());
+    if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+    redoStack = [];
+    historyBurstActive = true;
+    updateHistoryButtons();
+  }
+  clearTimeout(historyBurstTimer);
+  historyBurstTimer = setTimeout(() => { historyBurstActive = false; }, 800);
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshotSchema());
+  schema = JSON.parse(undoStack.pop());
+  bumpIdCounterFromSchema(schema);
+  historyBurstActive = false;
+  renderAll();
+  updateHistoryButtons();
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshotSchema());
+  schema = JSON.parse(redoStack.pop());
+  bumpIdCounterFromSchema(schema);
+  historyBurstActive = false;
+  renderAll();
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+  const u = document.getElementById('undoBtn');
+  const r = document.getElementById('redoBtn');
+  if (u) u.disabled = !undoStack.length;
+  if (r) r.disabled = !redoStack.length;
+}
+
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+});
 
 // collapse state: separate for builder and form; true = collapsed
 let bCollapsed = {};
@@ -137,16 +221,17 @@ function collectDescendantLists(op) {
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
-function addOperand(targetList) { targetList.push(makeOperand()); renderAll(); }
+function addOperand(targetList) { pushHistory(); targetList.push(makeOperand()); renderAll(); }
 function removeOperand(id) {
   const list = findOperandParentList(schema, id);
   if (!list) return;
+  pushHistory();
   list.splice(list.findIndex(op => op.id === id), 1);
   renderAll();
 }
 function addValue(opId, kind) {
   const op = findOperand(schema, opId);
-  if (op) { op.values.push(makeValue(kind)); renderAll(); }
+  if (op) { pushHistory(); op.values.push(makeValue(kind)); renderAll(); }
 }
 function removeValue(valId) {
   function rem(list) {
@@ -157,11 +242,12 @@ function removeValue(valId) {
     }
     return false;
   }
+  pushHistory();
   rem(schema); renderAll();
 }
 function addNestedOperand(valId) {
   const v = findValue(schema, valId);
-  if (v && v.kind === 'nested') { v.children.push(makeOperand()); renderAll(); }
+  if (v && v.kind === 'nested') { pushHistory(); v.children.push(makeOperand()); renderAll(); }
 }
 
 // deep-clone with fresh ids for every operand/value in the subtree
@@ -185,6 +271,7 @@ function duplicateOperand(id) {
   const list = findOperandParentList(schema, id);
   const op = findOperand(schema, id);
   if (!list || !op) return;
+  pushHistory();
   list.splice(list.indexOf(op) + 1, 0, cloneOperand(op));
   renderAll();
 }
@@ -192,18 +279,20 @@ function duplicateValue(id) {
   const list = findValueParentList(schema, id);
   const v = findValue(schema, id);
   if (!list || !v) return;
+  pushHistory();
   list.splice(list.indexOf(v) + 1, 0, cloneValue(v));
   renderAll();
 }
 
 // text-only mutations — don't rebuild the builder, just refresh form+output
-function setOperandName(id, val) { const op = findOperand(schema, id); if (op) op.name = val; renderFormAndOutput(); }
-function setValueLabel(id, val) { const v = findValue(schema, id); if (v) v.label = val; renderFormAndOutput(); }
-function setValueSimpleType(id, val) { const v = findValue(schema, id); if (v) v.simpleType = val; renderFormAndOutput(); }
-function setValueMaxItems(id, val) { const v = findValue(schema, id); if (v) v.maxItems = Math.max(1, parseInt(val) || 1); renderFormAndOutput(); }
+function setOperandName(id, val) { pushHistoryDebounced(); const op = findOperand(schema, id); if (op) op.name = val; renderFormAndOutput(); }
+function setValueLabel(id, val) { pushHistoryDebounced(); const v = findValue(schema, id); if (v) v.label = val; renderFormAndOutput(); }
+function setValueSimpleType(id, val) { pushHistory(); const v = findValue(schema, id); if (v) v.simpleType = val; renderFormAndOutput(); }
+function setValueMaxItems(id, val) { pushHistoryDebounced(); const v = findValue(schema, id); if (v) v.maxItems = Math.max(1, parseInt(val) || 1); renderFormAndOutput(); }
 function setValueDefault(id, isDefault) {
   const v = findValue(schema, id);
   if (!v) return;
+  pushHistory();
   if (isDefault) {
     const list = findValueParentList(schema, id);
     if (list) list.forEach(sib => { if (sib.id !== id) sib.isDefault = false; });
@@ -214,6 +303,7 @@ function setValueDefault(id, isDefault) {
 function changeValueKind(id, kind) {
   const v = findValue(schema, id);
   if (!v) return;
+  pushHistory();
   v.kind = kind;
   if (kind === 'keyword' && !v.label) v.label = '*NEW-VALUE';
   if (kind === 'simple' && !v.simpleType) v.simpleType = SIMPLE_TYPES[0];
@@ -227,6 +317,7 @@ function moveOperand(dragId, targetList, targetIndex) {
   const dragOp = findOperand(schema, dragId);
   const srcList = findOperandParentList(schema, dragId);
   if (!dragOp || !srcList) return;
+  pushHistory();
   const srcIdx = srcList.indexOf(dragOp);
   srcList.splice(srcIdx, 1);
   if (srcList === targetList && srcIdx < targetIndex) targetIndex--;
@@ -239,6 +330,7 @@ function moveValue(dragId, targetList, targetIndex) {
   const dragVal = findValue(schema, dragId);
   const srcList = findValueParentList(schema, dragId);
   if (!dragVal || !srcList) return;
+  pushHistory();
   const srcIdx = srcList.indexOf(dragVal);
   srcList.splice(srcIdx, 1);
   if (srcList === targetList && srcIdx < targetIndex) targetIndex--;
@@ -673,12 +765,14 @@ function exampleSchema() {
 }
 
 function resetSchema() {
+  pushHistory();
   schema = exampleSchema();
   selections = {}; bCollapsed = {}; fCollapsed = {};
   collapseAll(schema);
   renderAll();
 }
 function clearSchema() {
+  pushHistory();
   idCounter = 1; schema = [];
   selections = {}; bCollapsed = {}; fCollapsed = {};
   renderAll();
@@ -699,19 +793,11 @@ function loadFromFile(file) {
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
+      pushHistory();
       schema = data.schema || [];
       selections = data.selections || {};
       document.getElementById('stmtName').value = data.stmtName || 'STATEMENT';
-      let max = 0;
-      const scan = list => list.forEach(op => {
-        const m = /^n(\d+)$/.exec(op.id || ''); if (m) max = Math.max(max, +m[1]);
-        op.values.forEach(v => {
-          const m2 = /^n(\d+)$/.exec(v.id || ''); if (m2) max = Math.max(max, +m2[1]);
-          if (v.kind === 'nested' && v.children) scan(v.children);
-        });
-      });
-      scan(schema);
-      idCounter = max + 1;
+      bumpIdCounterFromSchema(schema);
       bCollapsed = {}; fCollapsed = {};
       collapseAll(schema);
       renderAll();
@@ -963,6 +1049,7 @@ function saveDescModal() {
   if (!_modalOpId) return;
   const op = findOperand(schema, _modalOpId);
   if (op) {
+    pushHistory();
     const opTa = document.getElementById('_desc_op');
     if (opTa) op.description = opTa.value;
     op.values.forEach(v => {

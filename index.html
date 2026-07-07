@@ -15,6 +15,8 @@
   <div class="meta-row">
     <label>Statement name:</label>
     <input type="text" id="stmtName" value="RESTORE" oninput="renderOutput()" size="18">
+    <button id="undoBtn" onclick="undo()" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+    <button id="redoBtn" onclick="redo()" title="Redo (Ctrl+Y)" disabled>↷ Redo</button>
     <button onclick="saveToFile()">💾 Save</button>
     <button onclick="document.getElementById('loadInput').click()">📂 Load</button>
     <input type="file" id="loadInput" accept=".json" style="display:none" onchange="loadFromFile(this.files[0])">
