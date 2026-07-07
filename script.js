@@ -164,6 +164,38 @@ function addNestedOperand(valId) {
   if (v && v.kind === 'nested') { v.children.push(makeOperand()); renderAll(); }
 }
 
+// deep-clone with fresh ids for every operand/value in the subtree
+function cloneOperand(op) {
+  return {
+    id: uid(),
+    name: op.name,
+    description: op.description || '',
+    values: op.values.map(cloneValue),
+  };
+}
+function cloneValue(v) {
+  const nv = { id: uid(), kind: v.kind, description: v.description || '' };
+  if (v.kind === 'keyword') nv.label = v.label;
+  if (v.kind === 'simple') nv.simpleType = v.simpleType;
+  if (v.kind === 'nested') { nv.label = v.label; nv.children = (v.children || []).map(cloneOperand); }
+  if (v.kind === 'list') { nv.simpleType = v.simpleType; nv.maxItems = v.maxItems; }
+  return nv;
+}
+function duplicateOperand(id) {
+  const list = findOperandParentList(schema, id);
+  const op = findOperand(schema, id);
+  if (!list || !op) return;
+  list.splice(list.indexOf(op) + 1, 0, cloneOperand(op));
+  renderAll();
+}
+function duplicateValue(id) {
+  const list = findValueParentList(schema, id);
+  const v = findValue(schema, id);
+  if (!list || !v) return;
+  list.splice(list.indexOf(v) + 1, 0, cloneValue(v));
+  renderAll();
+}
+
 // text-only mutations — don't rebuild the builder, just refresh form+output
 function setOperandName(id, val) { const op = findOperand(schema, id); if (op) op.name = val; renderFormAndOutput(); }
 function setValueLabel(id, val) { const v = findValue(schema, id); if (v) v.label = val; renderFormAndOutput(); }
@@ -267,8 +299,9 @@ function buildOperandEl(op, ownerList) {
     <span class="drag-handle" title="Drag to reorder" onclick="event.stopPropagation()">⠿</span>
     <span class="op-toggle">${collapsed ? '▶' : '▼'}</span>
     <span class="op-head-name">${esc(op.name)}</span>
-    <button onclick="event.stopPropagation();openDescModal('${op.id}')" title="Edit descriptions">📝 Desc</button>
-    <button class="danger" onclick="event.stopPropagation();removeOperand('${op.id}')">✕ Delete</button>
+    <button onclick="event.stopPropagation();openDescModal('${op.id}')" title="Edit descriptions">📝</button>
+    <button onclick="event.stopPropagation();duplicateOperand('${op.id}')" title="Duplicate operand">⧉</button>
+    <button class="danger" onclick="event.stopPropagation();removeOperand('${op.id}')" title="Delete operand">✕</button>
   `;
   head.onclick = () => toggleBCollapse(op.id);
   wrap.appendChild(head);
@@ -330,6 +363,7 @@ function buildValueEl(parentOp, v) {
   const box = document.createElement('div'); box.className = 'val-box';
   const kindTag = `<span class="tag-kind ${v.kind}">${v.kind}</span>`;
   const dragHandle = '<span class="drag-handle" title="Drag to reorder" onclick="event.stopPropagation()">⠿</span>';
+  const dupBtn = `<button onclick="duplicateValue('${v.id}')" title="Duplicate value">⧉</button>`;
   const kindOpts = ['keyword', 'simple', 'nested', 'list'].map(k =>
     `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${k}</option>`
   ).join('');
@@ -342,7 +376,8 @@ function buildValueEl(parentOp, v) {
       ${kindTag}
       <input type="text" value="${esc(v.label)}" oninput="setValueLabel('${v.id}',this.value)" size="16" placeholder="*KEYWORD">
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
-      <button class="danger" onclick="removeValue('${v.id}')">✕</button>`;
+      ${dupBtn}
+      <button class="danger" onclick="removeValue('${v.id}')" title="Delete value">✕</button>`;
 
   } else if (v.kind === 'simple') {
     const opts = SIMPLE_TYPES.map(t =>
@@ -352,6 +387,7 @@ function buildValueEl(parentOp, v) {
       ${kindTag}
       <select onchange="setValueSimpleType('${v.id}',this.value)">${opts}</select>
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
+      ${dupBtn}
       <button class="danger" onclick="removeValue('${v.id}')">✕</button>`;
 
   } else if (v.kind === 'list') {
@@ -364,6 +400,7 @@ function buildValueEl(parentOp, v) {
         min="1" max="999" onchange="setValueMaxItems('${v.id}',this.value)">)</span>
       <select onchange="setValueSimpleType('${v.id}',this.value)">${opts}</select>
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
+      ${dupBtn}
       <button class="danger" onclick="removeValue('${v.id}')">✕</button>`;
 
   } else if (v.kind === 'nested') {
@@ -372,6 +409,7 @@ function buildValueEl(parentOp, v) {
       ${kindTag}
       <input type="text" value="${esc(v.label)}" oninput="setValueLabel('${v.id}',this.value)" size="16" placeholder="*LABEL">
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
+      ${dupBtn}
       <button class="danger" onclick="removeValue('${v.id}')">✕</button>`;
   }
   box.appendChild(topRow);
