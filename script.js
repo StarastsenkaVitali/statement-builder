@@ -71,6 +71,16 @@ let schema = [];
 let bCollapsed = {};
 let fCollapsed = {};
 
+// drag-and-drop state: { kind:'operand'|'value', id, forbiddenLists? }
+let dragState = null;
+
+// dragstart's event.target is normalized by the browser to the nearest
+// [draggable] ancestor (the whole card), never the exact element the mouse
+// went down on — so we track handle mousedowns separately to gate drags.
+let mouseDownOnHandle = false;
+document.addEventListener('mousedown', e => { mouseDownOnHandle = !!e.target.closest('.drag-handle'); }, true);
+document.addEventListener('mouseup', () => { mouseDownOnHandle = false; });
+
 // collapse all operands in a list (and their nested children) by default
 function collapseAll(list) {
   list.forEach(op => {
@@ -105,6 +115,25 @@ function findValue(list, id) {
     }
   }
   return null;
+}
+function findValueParentList(list, id) {
+  for (const op of list) {
+    if (op.values.some(v => v.id === id)) return op.values;
+    for (const v of op.values)
+      if (v.kind === 'nested') { const f = findValueParentList(v.children, id); if (f) return f; }
+  }
+  return null;
+}
+// arrays (nested values' .children) reachable inside op's own subtree —
+// illegal drop targets for op, since dropping there would create a cycle
+function collectDescendantLists(op) {
+  const lists = new Set();
+  (function walk(o) {
+    for (const v of o.values) {
+      if (v.kind === 'nested') { lists.add(v.children); v.children.forEach(walk); }
+    }
+  })(op);
+  return lists;
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
@@ -151,6 +180,73 @@ function changeValueKind(id, kind) {
   renderAll();
 }
 
+// ─── Drag & drop ──────────────────────────────────────────────────────────────
+function moveOperand(dragId, targetList, targetIndex) {
+  const dragOp = findOperand(schema, dragId);
+  const srcList = findOperandParentList(schema, dragId);
+  if (!dragOp || !srcList) return;
+  const srcIdx = srcList.indexOf(dragOp);
+  srcList.splice(srcIdx, 1);
+  if (srcList === targetList && srcIdx < targetIndex) targetIndex--;
+  targetIndex = Math.max(0, Math.min(targetIndex, targetList.length));
+  targetList.splice(targetIndex, 0, dragOp);
+  renderAll();
+}
+
+function moveValue(dragId, targetList, targetIndex) {
+  const dragVal = findValue(schema, dragId);
+  const srcList = findValueParentList(schema, dragId);
+  if (!dragVal || !srcList) return;
+  const srcIdx = srcList.indexOf(dragVal);
+  srcList.splice(srcIdx, 1);
+  if (srcList === targetList && srcIdx < targetIndex) targetIndex--;
+  targetIndex = Math.max(0, Math.min(targetIndex, targetList.length));
+  targetList.splice(targetIndex, 0, dragVal);
+  renderAll();
+}
+
+// index to insert at when a drop lands on a container's empty space
+// rather than on one of its child cards
+function containerDropIndex(container, listLength, clientY) {
+  const kids = container.children;
+  if (!kids.length) return 0;
+  return clientY < kids[0].getBoundingClientRect().top ? 0 : listLength;
+}
+function wireOperandContainer(el, targetList) {
+  el.ondragover = (e) => {
+    if (!dragState || dragState.kind !== 'operand') return;
+    if (dragState.forbiddenLists.has(targetList)) return;
+    e.preventDefault(); e.stopPropagation();
+    el.classList.add('drag-over-container');
+  };
+  el.ondragleave = () => el.classList.remove('drag-over-container');
+  el.ondrop = (e) => {
+    if (!dragState || dragState.kind !== 'operand') return;
+    e.preventDefault(); e.stopPropagation();
+    el.classList.remove('drag-over-container');
+    if (dragState.forbiddenLists.has(targetList)) return;
+    moveOperand(dragState.id, targetList, containerDropIndex(el, targetList.length, e.clientY));
+  };
+}
+function wireValueContainer(el, targetList) {
+  el.ondragover = (e) => {
+    if (!dragState || dragState.kind !== 'value') return;
+    e.preventDefault(); e.stopPropagation();
+    el.classList.add('drag-over-container');
+  };
+  el.ondragleave = () => el.classList.remove('drag-over-container');
+  el.ondrop = (e) => {
+    if (!dragState || dragState.kind !== 'value') return;
+    e.preventDefault(); e.stopPropagation();
+    el.classList.remove('drag-over-container');
+    moveValue(dragState.id, targetList, containerDropIndex(el, targetList.length, e.clientY));
+  };
+}
+function clearDragVisuals() {
+  document.querySelectorAll('.dragging,.drag-over-before,.drag-over-after,.drag-over-container')
+    .forEach(el => el.classList.remove('dragging', 'drag-over-before', 'drag-over-after', 'drag-over-container'));
+}
+
 function toggleBCollapse(id) { bCollapsed[id] = !bCollapsed[id]; renderBuilder(); }
 function toggleFCollapse(id) { fCollapsed[id] = !fCollapsed[id]; renderForm(); renderOutput(); }
 
@@ -158,15 +254,17 @@ function toggleFCollapse(id) { fCollapsed[id] = !fCollapsed[id]; renderForm(); r
 function renderBuilder() {
   const root = document.getElementById('builder');
   root.innerHTML = '';
-  schema.forEach(op => root.appendChild(buildOperandEl(op)));
+  schema.forEach(op => root.appendChild(buildOperandEl(op, schema)));
+  wireOperandContainer(root, schema);
 }
 
-function buildOperandEl(op) {
+function buildOperandEl(op, ownerList) {
   const collapsed = !!bCollapsed[op.id];
   const wrap = document.createElement('div'); wrap.className = 'op-block';
 
   const head = document.createElement('div'); head.className = 'op-head';
   head.innerHTML = `
+    <span class="drag-handle" title="Drag to reorder" onclick="event.stopPropagation()">⠿</span>
     <span class="op-toggle">${collapsed ? '▶' : '▼'}</span>
     <span class="op-head-name">${esc(op.name)}</span>
     <button onclick="event.stopPropagation();openDescModal('${op.id}')" title="Edit descriptions">📝 Desc</button>
@@ -174,6 +272,33 @@ function buildOperandEl(op) {
   `;
   head.onclick = () => toggleBCollapse(op.id);
   wrap.appendChild(head);
+
+  wrap.draggable = true;
+  wrap.ondragstart = (e) => {
+    if (!mouseDownOnHandle) { e.preventDefault(); return; }
+    e.stopPropagation();
+    dragState = { kind: 'operand', id: op.id, forbiddenLists: collectDescendantLists(op) };
+    e.dataTransfer.setData('text/plain', op.id);
+    e.dataTransfer.effectAllowed = 'move';
+    wrap.classList.add('dragging');
+  };
+  wrap.ondragover = (e) => {
+    if (!dragState || dragState.kind !== 'operand') return;
+    if (dragState.forbiddenLists.has(ownerList)) return;
+    e.preventDefault(); e.stopPropagation();
+    const before = e.clientY < head.getBoundingClientRect().top + head.getBoundingClientRect().height / 2;
+    wrap.classList.toggle('drag-over-before', before);
+    wrap.classList.toggle('drag-over-after', !before);
+  };
+  wrap.ondrop = (e) => {
+    if (!dragState || dragState.kind !== 'operand') return;
+    e.preventDefault(); e.stopPropagation();
+    wrap.classList.remove('drag-over-before', 'drag-over-after');
+    if (dragState.forbiddenLists.has(ownerList)) return;
+    const before = e.clientY < head.getBoundingClientRect().top + head.getBoundingClientRect().height / 2;
+    moveOperand(dragState.id, ownerList, ownerList.indexOf(op) + (before ? 0 : 1));
+  };
+  wrap.ondragend = () => { clearDragVisuals(); dragState = null; };
 
   const body = document.createElement('div');
   body.className = 'op-body' + (collapsed ? ' hidden' : '');
@@ -183,8 +308,9 @@ function buildOperandEl(op) {
     <input type="text" value="${esc(op.name)}" oninput="setOperandName('${op.id}',this.value)" size="22">`;
   body.appendChild(nameRow);
 
-  const vWrap = document.createElement('div'); vWrap.style.marginTop = '4px';
+  const vWrap = document.createElement('div'); vWrap.className = 'value-list';
   op.values.forEach(v => vWrap.appendChild(buildValueEl(op, v)));
+  wireValueContainer(vWrap, op.values);
   body.appendChild(vWrap);
 
   const addRow = document.createElement('div'); addRow.className = 'row'; addRow.style.marginTop = '4px';
@@ -203,6 +329,7 @@ function buildOperandEl(op) {
 function buildValueEl(parentOp, v) {
   const box = document.createElement('div'); box.className = 'val-box';
   const kindTag = `<span class="tag-kind ${v.kind}">${v.kind}</span>`;
+  const dragHandle = '<span class="drag-handle" title="Drag to reorder" onclick="event.stopPropagation()">⠿</span>';
   const kindOpts = ['keyword', 'simple', 'nested', 'list'].map(k =>
     `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${k}</option>`
   ).join('');
@@ -211,6 +338,7 @@ function buildValueEl(parentOp, v) {
 
   if (v.kind === 'keyword') {
     topRow.innerHTML = `
+      ${dragHandle}
       ${kindTag}
       <input type="text" value="${esc(v.label)}" oninput="setValueLabel('${v.id}',this.value)" size="16" placeholder="*KEYWORD">
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
@@ -220,6 +348,7 @@ function buildValueEl(parentOp, v) {
     const opts = SIMPLE_TYPES.map(t =>
       `<option value="${esc(t)}" ${v.simpleType === t ? 'selected' : ''}>${esc(t)}</option>`).join('');
     topRow.innerHTML = `
+      ${dragHandle}
       ${kindTag}
       <select onchange="setValueSimpleType('${v.id}',this.value)">${opts}</select>
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
@@ -229,6 +358,7 @@ function buildValueEl(parentOp, v) {
     const opts = SIMPLE_TYPES.map(t =>
       `<option value="${esc(t)}" ${v.simpleType === t ? 'selected' : ''}>${esc(t)}</option>`).join('');
     topRow.innerHTML = `
+      ${dragHandle}
       ${kindTag}
       <span style="color:#536;font-weight:bold">list-poss(<input type="number" value="${v.maxItems || 20}"
         min="1" max="999" onchange="setValueMaxItems('${v.id}',this.value)">)</span>
@@ -238,6 +368,7 @@ function buildValueEl(parentOp, v) {
 
   } else if (v.kind === 'nested') {
     topRow.innerHTML = `
+      ${dragHandle}
       ${kindTag}
       <input type="text" value="${esc(v.label)}" oninput="setValueLabel('${v.id}',this.value)" size="16" placeholder="*LABEL">
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
@@ -245,10 +376,36 @@ function buildValueEl(parentOp, v) {
   }
   box.appendChild(topRow);
 
+  box.draggable = true;
+  box.ondragstart = (e) => {
+    if (!mouseDownOnHandle) { e.preventDefault(); return; }
+    e.stopPropagation();
+    dragState = { kind: 'value', id: v.id };
+    e.dataTransfer.setData('text/plain', v.id);
+    e.dataTransfer.effectAllowed = 'move';
+    box.classList.add('dragging');
+  };
+  box.ondragover = (e) => {
+    if (!dragState || dragState.kind !== 'value') return;
+    e.preventDefault(); e.stopPropagation();
+    const before = e.clientY < topRow.getBoundingClientRect().top + topRow.getBoundingClientRect().height / 2;
+    box.classList.toggle('drag-over-before', before);
+    box.classList.toggle('drag-over-after', !before);
+  };
+  box.ondrop = (e) => {
+    if (!dragState || dragState.kind !== 'value') return;
+    e.preventDefault(); e.stopPropagation();
+    box.classList.remove('drag-over-before', 'drag-over-after');
+    const before = e.clientY < topRow.getBoundingClientRect().top + topRow.getBoundingClientRect().height / 2;
+    moveValue(dragState.id, parentOp.values, parentOp.values.indexOf(v) + (before ? 0 : 1));
+  };
+  box.ondragend = () => { clearDragVisuals(); dragState = null; };
+
   if (v.kind === 'nested') {
     const cw = document.createElement('div'); cw.className = 'node';
-    (v.children || []).forEach(cop => cw.appendChild(buildOperandEl(cop)));
+    (v.children || []).forEach(cop => cw.appendChild(buildOperandEl(cop, v.children)));
     box.appendChild(cw);
+    wireOperandContainer(cw, v.children);
     const btn = document.createElement('button'); btn.className = 'add';
     btn.textContent = '+ Add nested operand';
     btn.onclick = () => addNestedOperand(v.id);

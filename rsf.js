@@ -1996,7 +1996,7 @@ const EXAMPLE_RESTORE_FILES = {
 
 function loadExample() {
   const data = JSON.parse(JSON.stringify(EXAMPLE_RESTORE_FILES)); // deep clone
-  schema     = data.schema;
+  schema = data.schema;
   selections = data.selections || {};
   document.getElementById('stmtName').value = data.stmtName;
   let max = 0;

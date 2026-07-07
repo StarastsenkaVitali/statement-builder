@@ -121,6 +121,46 @@ h2 {
   background: #fafafa;
 }
 
+/* ── drag & drop ── */
+.drag-handle {
+  cursor: grab;
+  color: #888;
+  font-size: 13px;
+  padding: 0 2px;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.value-list {
+  margin-top: 4px;
+  min-height: 6px;
+}
+
+.op-block.dragging,
+.val-box.dragging {
+  opacity: 0.4;
+}
+
+.op-block.drag-over-before,
+.val-box.drag-over-before {
+  border-top: 2px solid #0052CC;
+}
+
+.op-block.drag-over-after,
+.val-box.drag-over-after {
+  border-bottom: 2px solid #0052CC;
+}
+
+.node.drag-over-container,
+.value-list.drag-over-container,
+#builder.drag-over-container {
+  outline: 2px dashed #0052CC;
+  outline-offset: -2px;
+  background: #eef4ff;
+}
+
 /* ── form ── */
 .form-op {
   margin: 3px 0;
