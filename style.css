@@ -306,6 +306,33 @@ button.add:hover {
   color: #536;
 }
 
+/* ── default-value toggle ── */
+.default-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.default-toggle input {
+  cursor: pointer;
+}
+
+.tag-default {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  font-weight: bold;
+  background: #eee;
+  color: #999;
+}
+
+.tag-default.active {
+  background: #ffe9a8;
+  color: #7a5b00;
+}
+
 /* ── output ── */
 #output {
   white-space: pre-wrap;

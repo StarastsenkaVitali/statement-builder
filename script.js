@@ -37,7 +37,7 @@ function makeOperand(name) {
   return { id: uid(), name: name || 'NEW-OPERAND', values: [], description: '' };
 }
 function makeValue(kind) {
-  const v = { id: uid(), kind: kind || 'keyword', description: '' };
+  const v = { id: uid(), kind: kind || 'keyword', description: '', isDefault: false };
   if (kind === 'keyword') { v.label = '*NEW-VALUE'; }
   if (kind === 'simple') { v.simpleType = SIMPLE_TYPES[0]; }
   if (kind === 'nested') { v.label = '*NEW-VALUE'; v.children = []; }
@@ -174,7 +174,7 @@ function cloneOperand(op) {
   };
 }
 function cloneValue(v) {
-  const nv = { id: uid(), kind: v.kind, description: v.description || '' };
+  const nv = { id: uid(), kind: v.kind, description: v.description || '', isDefault: !!v.isDefault };
   if (v.kind === 'keyword') nv.label = v.label;
   if (v.kind === 'simple') nv.simpleType = v.simpleType;
   if (v.kind === 'nested') { nv.label = v.label; nv.children = (v.children || []).map(cloneOperand); }
@@ -201,6 +201,16 @@ function setOperandName(id, val) { const op = findOperand(schema, id); if (op) o
 function setValueLabel(id, val) { const v = findValue(schema, id); if (v) v.label = val; renderFormAndOutput(); }
 function setValueSimpleType(id, val) { const v = findValue(schema, id); if (v) v.simpleType = val; renderFormAndOutput(); }
 function setValueMaxItems(id, val) { const v = findValue(schema, id); if (v) v.maxItems = Math.max(1, parseInt(val) || 1); renderFormAndOutput(); }
+function setValueDefault(id, isDefault) {
+  const v = findValue(schema, id);
+  if (!v) return;
+  if (isDefault) {
+    const list = findValueParentList(schema, id);
+    if (list) list.forEach(sib => { if (sib.id !== id) sib.isDefault = false; });
+  }
+  v.isDefault = isDefault;
+  renderAll();
+}
 function changeValueKind(id, kind) {
   const v = findValue(schema, id);
   if (!v) return;
@@ -364,6 +374,11 @@ function buildValueEl(parentOp, v) {
   const kindTag = `<span class="tag-kind ${v.kind}">${v.kind}</span>`;
   const dragHandle = '<span class="drag-handle" title="Drag to reorder" onclick="event.stopPropagation()">⠿</span>';
   const dupBtn = `<button onclick="duplicateValue('${v.id}')" title="Duplicate value">⧉</button>`;
+  const defControl = `
+    <label class="default-toggle" title="Mark as the default value" onclick="event.stopPropagation()">
+      <input type="checkbox" ${v.isDefault ? 'checked' : ''} onchange="setValueDefault('${v.id}',this.checked)">
+      <span class="tag-default${v.isDefault ? ' active' : ''}">default</span>
+    </label>`;
   const kindOpts = ['keyword', 'simple', 'nested', 'list'].map(k =>
     `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${k}</option>`
   ).join('');
@@ -376,6 +391,7 @@ function buildValueEl(parentOp, v) {
       ${kindTag}
       <input type="text" value="${esc(v.label)}" oninput="setValueLabel('${v.id}',this.value)" size="16" placeholder="*KEYWORD">
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
+      ${defControl}
       ${dupBtn}
       <button class="danger" onclick="removeValue('${v.id}')" title="Delete value">✕</button>`;
 
@@ -387,6 +403,7 @@ function buildValueEl(parentOp, v) {
       ${kindTag}
       <select onchange="setValueSimpleType('${v.id}',this.value)">${opts}</select>
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
+      ${defControl}
       ${dupBtn}
       <button class="danger" onclick="removeValue('${v.id}')">✕</button>`;
 
@@ -400,6 +417,7 @@ function buildValueEl(parentOp, v) {
         min="1" max="999" onchange="setValueMaxItems('${v.id}',this.value)">)</span>
       <select onchange="setValueSimpleType('${v.id}',this.value)">${opts}</select>
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
+      ${defControl}
       ${dupBtn}
       <button class="danger" onclick="removeValue('${v.id}')">✕</button>`;
 
@@ -409,6 +427,7 @@ function buildValueEl(parentOp, v) {
       ${kindTag}
       <input type="text" value="${esc(v.label)}" oninput="setValueLabel('${v.id}',this.value)" size="16" placeholder="*LABEL">
       kind: <select onchange="changeValueKind('${v.id}',this.value)">${kindOpts}</select>
+      ${defControl}
       ${dupBtn}
       <button class="danger" onclick="removeValue('${v.id}')">✕</button>`;
   }
@@ -507,6 +526,7 @@ function buildFormOperandEl(op) {
         const opt = document.createElement('option');
         opt.value = v.id;
         opt.textContent = valueLabel(v);
+        if (v.isDefault) opt.style.fontWeight = 'bold';
         if (v.id === sel.choiceId) opt.selected = true;
         dd.appendChild(opt);
       });
@@ -515,8 +535,14 @@ function buildFormOperandEl(op) {
     } else {
       const tag = document.createElement('span'); tag.className = 'form-static';
       tag.textContent = valueLabel(op.values[0]);
+      if (op.values[0].isDefault) tag.style.fontWeight = 'bold';
       sel.choiceId = op.values[0].id;
       lineRow.appendChild(tag);
+    }
+    if (chosenVal && chosenVal.isDefault) {
+      const dh = document.createElement('span'); dh.className = 'hint';
+      dh.textContent = '(default — omitted from generated statement)';
+      lineRow.appendChild(dh);
     }
     body.appendChild(lineRow);
 
@@ -589,6 +615,7 @@ function buildOperandOut(op, depth) {
   if (!op.values.length) return op.name + '=<no values>';
   const sel = getSel(op);
   const v = op.values.find(x => x.id === sel.choiceId) || op.values[0];
+  if (v.isDefault) return '';
 
   let valStr;
   if (v.kind === 'keyword') {
@@ -695,8 +722,8 @@ function loadFromFile(file) {
 }
 
 // ─── DOCX Export ──────────────────────────────────────────────────────────────
-function operandPfx(L) { return L === 0 ? '' : expansionPfx(L - 1) + '|    '; }
-function expansionPfx(L) { return L === 0 ? '    ' : expansionPfx(L - 1) + '|        '; }
+function operandPfx(L) { return L === 0 ? '' : expansionPfx(L - 1) + '  |  '; }
+function expansionPfx(L) { return L === 0 ? '  ' : expansionPfx(L - 1) + '  |  '; }
 
 function schemaToDocLines(operands, opLevel) {
   const opP = operandPfx(opLevel), exP = expansionPfx(opLevel);
@@ -713,28 +740,30 @@ function schemaToDocLines(operands, opLevel) {
 }
 
 function xmlEsc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function wRpr(bold, italic, size, color) {
+function wRpr(bold, italic, size, color, underline) {
   size = size || 20;
   return `<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>` +
     `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>` +
     (bold ? '<w:b/><w:bCs/>' : '') +
     (italic ? '<w:i/><w:iCs/>' : '') +
+    (underline ? '<w:u w:val="single"/>' : '') +
     (color ? `<w:color w:val="${color}"/>` : '') +
     `</w:rPr>`;
 }
-function wRun(text, bold, italic, size, color) {
+function wRun(text, bold, italic, size, color, underline) {
   if (!text && text !== ' ') return '';
   const sp = /^\s|\s$/.test(text) ? ' xml:space="preserve"' : '';
-  return `<w:r>${wRpr(bold, italic, size, color)}<w:t${sp}>${xmlEsc(text)}</w:t></w:r>`;
+  return `<w:r>${wRpr(bold, italic, size, color, underline)}<w:t${sp}>${xmlEsc(text)}</w:t></w:r>`;
 }
 function wPara(runs, sa) {
   return `<w:p><w:pPr><w:spacing w:before="0" w:after="${sa || 0}"/></w:pPr>${runs}</w:p>`;
 }
 function valueRunsXml(v) {
-  if (v.kind === 'keyword') return wRun(v.label, true, true);
-  if (v.kind === 'simple') return wRun(v.simpleType);
-  if (v.kind === 'nested') return wRun(v.label, true, true) + wRun('(...)');
-  if (v.kind === 'list') return wRun('list-poss(' + (v.maxItems || 20) + '): ') + wRun(v.simpleType);
+  const u = !!v.isDefault;
+  if (v.kind === 'keyword') return wRun(v.label, true, true, null, null, u);
+  if (v.kind === 'simple') return wRun(v.simpleType, false, false, null, null, u);
+  if (v.kind === 'nested') return wRun(v.label, true, true, null, null, u) + wRun('(...)', false, false, null, null, u);
+  if (v.kind === 'list') return wRun('list-poss(' + (v.maxItems || 20) + '): ', false, false, null, null, u) + wRun(v.simpleType, false, false, null, null, u);
   return '';
 }
 function lineToDocXml(line) {
@@ -769,7 +798,7 @@ async function exportDocx() {
         descXml += wParaIndent(wRun(d.name, true), left);
         if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left + 180);
       } else {
-        descXml += wParaIndent(wRun(d.label, false, true), left);
+        descXml += wParaIndent(wRun(d.label, true, false, null, null, d.isDefault), left);
         if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left + 180);
       }
     });
@@ -818,11 +847,13 @@ function exportHtml() {
   const he = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   function valHtml(v) {
-    if (v.kind === 'keyword') return `<strong>${he(v.label)}</strong>`;
-    if (v.kind === 'simple') return `<span class="tp">${he(v.simpleType)}</span>`;
-    if (v.kind === 'nested') return `<strong><em>${he(v.label)}</em></strong><span class="pu">(...)</span>`;
-    if (v.kind === 'list') return `list-poss(${v.maxItems || 20}): <span class="tp">${he(v.simpleType)}</span>`;
-    return '';
+    let s;
+    if (v.kind === 'keyword') s = `<strong>${he(v.label)}</strong>`;
+    else if (v.kind === 'simple') s = `<span class="tp">${he(v.simpleType)}</span>`;
+    else if (v.kind === 'nested') s = `<strong><em>${he(v.label)}</em></strong><span class="pu">(...)</span>`;
+    else if (v.kind === 'list') s = `list-poss(${v.maxItems || 20}): <span class="tp">${he(v.simpleType)}</span>`;
+    else return '';
+    return v.isDefault ? `<u>${s}</u>` : s;
   }
 
   const lines = [{ type: 'title', name }, ...schemaToDocLines(schema, 0)];
@@ -850,7 +881,7 @@ function exportHtml() {
       if (d.type === 'op')
         descHtml += `<tr><td class="desc-op-name" style="padding-left:${pad}px">${he(d.name)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
       else
-        descHtml += `<tr><td class="desc-val-name" style="padding-left:${pad}px">${he(d.label)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
+        descHtml += `<tr><td class="desc-val-name${d.isDefault ? ' default' : ''}" style="padding-left:${pad}px">${he(d.label)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
     });
     descHtml += '</table>';
   }
@@ -876,7 +907,8 @@ function exportHtml() {
   .desc-table td { padding: 5px 10px; vertical-align: top; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
   .desc-table td:first-child { white-space: nowrap; font-family: Consolas, monospace; min-width: 200px; }
   .desc-op-name  { color: #000; font-weight: bold; }
-  .desc-val-name { color: #444; font-style: italic; }
+  .desc-val-name { color: #444; font-weight: bold; }
+  .desc-val-name.default { text-decoration: underline; }
   .desc-text     { color: #444; }
 </style>
 </head>
@@ -969,7 +1001,7 @@ function collectDescs(list, result, depth) {
     op.values.forEach(v => {
       const vHas = v.description || (v.kind === 'nested' && hasAnyDescription(v.children || []));
       if (!vHas) return;
-      result.push({ type: 'val', label: valueLabel(v), kind: v.kind, desc: v.description || '', depth: depth + 1 });
+      result.push({ type: 'val', label: valueLabel(v), kind: v.kind, desc: v.description || '', depth: depth + 1, isDefault: !!v.isDefault });
       if (v.kind === 'nested' && v.children) collectDescs(v.children, result, depth + 2);
     });
   });
