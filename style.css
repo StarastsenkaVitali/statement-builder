@@ -341,6 +341,35 @@ button.add:hover {
 }
 
 /* ── output ── */
+#output-wrap {
+  position: relative;
+}
+
+#copy-output {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: #2d2d2d;
+  color: #ccc;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 1;
+}
+
+#copy-output:hover {
+  background: #3a3a3a;
+  color: #fff;
+}
+
+#copy-output.copied {
+  background: #2e7d32;
+  border-color: #2e7d32;
+  color: #fff;
+}
+
 #output {
   white-space: pre-wrap;
   background: #1e1e1e;

@@ -733,6 +733,47 @@ function renderOutput() {
   out.textContent = name + '\n  ' + buildStmt(schema, 1);
 }
 
+// Copy the generated statement as a single line (no newlines/indentation).
+function copyOutput(btn) {
+  const out = document.getElementById('output');
+  const oneLine = out.textContent.replace(/\s*\n\s*/g, ' ').trim();
+  if (!oneLine) return;
+
+  function flash() {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(function () {
+      btn.textContent = prev;
+      btn.classList.remove('copied');
+    }, 1200);
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(oneLine).then(flash, function () {
+      fallbackCopy(oneLine, flash);
+    });
+  } else {
+    fallbackCopy(oneLine, flash);
+  }
+}
+
+function fallbackCopy(text, onDone) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+    onDone();
+  } catch (e) {
+    /* ignore */
+  }
+  document.body.removeChild(ta);
+}
+
 // ─── Top-level renders ────────────────────────────────────────────────────────
 function renderFormAndOutput() { renderForm(); renderOutput(); }
 function renderAll() { renderBuilder(); renderForm(); renderOutput(); }
