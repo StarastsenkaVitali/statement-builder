@@ -918,15 +918,16 @@ async function exportDocx() {
   if (descs.length) {
     const wParaIndent = (runs, left) =>
       `<w:p><w:pPr><w:ind w:left="${left}"/><w:spacing w:before="0" w:after="0"/></w:pPr>${runs}</w:p>`;
+    descXml += wPara(wRun('', true, false, 12), 80);
     descXml += wPara(wRun('Parameter Descriptions', true, false, 24), 80);
     descs.forEach(d => {
-      const left = d.depth * 360;
+      const left = d.depth * 180;
       if (d.type === 'op') {
         descXml += wParaIndent(wRun(d.name, true), left);
-        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left + 180);
+        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left);
       } else {
-        descXml += wParaIndent(wRun(d.label, true, false, null, null, d.isDefault), left);
-        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left + 180);
+        descXml += wParaIndent(wRun(d.prefix || '', true) + wRun(d.label, true, false, null, null, d.isDefault), left);
+        if (d.desc.trim()) descXml += wParaIndent(wRun(d.desc.trim()), left);
       }
     });
   }
@@ -1007,8 +1008,10 @@ function exportHtml() {
       const pad = d.depth * 20;
       if (d.type === 'op')
         descHtml += `<tr><td class="desc-op-name" style="padding-left:${pad}px">${he(d.name)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
-      else
-        descHtml += `<tr><td class="desc-val-name${d.isDefault ? ' default' : ''}" style="padding-left:${pad}px">${he(d.label)}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
+      else {
+        const lbl = d.isDefault ? `<u>${he(d.label)}</u>` : he(d.label);
+        descHtml += `<tr><td class="desc-val-name" style="padding-left:${pad}px">${he(d.prefix || '')}${lbl}</td><td class="desc-text">${he(d.desc)}</td></tr>`;
+      }
     });
     descHtml += '</table>';
   }
@@ -1129,7 +1132,7 @@ function collectDescs(list, result, depth) {
     op.values.forEach(v => {
       const vHas = v.description || (v.kind === 'nested' && hasAnyDescription(v.children || []));
       if (!vHas) return;
-      result.push({ type: 'val', label: op.name + '=' + valueLabel(v), kind: v.kind, desc: v.description || '', depth: depth + 1, isDefault: !!v.isDefault });
+      result.push({ type: 'val', prefix: op.name + '=', label: valueLabel(v), kind: v.kind, desc: v.description || '', depth: depth + 1, isDefault: !!v.isDefault });
       if (v.kind === 'nested' && v.children) collectDescs(v.children, result, depth + 2);
     });
   });
