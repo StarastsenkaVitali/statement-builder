@@ -1129,7 +1129,7 @@ function collectDescs(list, result, depth) {
     op.values.forEach(v => {
       const vHas = v.description || (v.kind === 'nested' && hasAnyDescription(v.children || []));
       if (!vHas) return;
-      result.push({ type: 'val', label: valueLabel(v), kind: v.kind, desc: v.description || '', depth: depth + 1, isDefault: !!v.isDefault });
+      result.push({ type: 'val', label: op.name + '=' + valueLabel(v), kind: v.kind, desc: v.description || '', depth: depth + 1, isDefault: !!v.isDefault });
       if (v.kind === 'nested' && v.children) collectDescs(v.children, result, depth + 2);
     });
   });
